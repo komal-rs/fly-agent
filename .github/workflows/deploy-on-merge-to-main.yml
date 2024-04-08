@@ -1,0 +1,56 @@
+name: Deploy to Fly on push to main
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build_check:
+    uses: ./.github/workflows/build-check.yml
+    with:
+      publish-artifact: true
+
+  deploy:
+    name: Deploy
+    needs: build_check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Download build
+        uses: actions/download-artifact@v4
+        with:
+          name: build-musl
+      - name: Setup dfx
+        uses: dfinity/setup-dfx@main
+      - name: Test pem file
+        run: |
+          touch actions_identity.pem
+          echo "$RECLAIM_CANISTER_PEM" > actions_identity.pem
+          dfx identity import --storage-mode=plaintext actions actions_identity.pem
+          dfx identity use actions
+          dfx identity list
+        env:
+          RECLAIM_CANISTER_PEM: |
+            ${{ secrets.HOT_OR_NOT_OFF_CHAIN_AGENT_CANISTER_PRIVILEGED_IDENTITY_SECRET_KEY }}
+      - run: chmod +x target/x86_64-unknown-linux-musl/release/icp-off-chain-agent
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: Set cloudflare token
+        run: |
+          flyctl secrets set "CF_R2_ACCESS_KEY_TEMP=$CF_R2_ACCESS_KEY_TEMP" --app "icp-off-chain-agent" --stage
+          flyctl secrets set "CF_R2_SECRET_ACCESS_KEY_TEMP=$CF_R2_SECRET_ACCESS_KEY_TEMP" --app "icp-off-chain-agent" --stage
+          flyctl secrets set "CF_WORKER_ACCESS_OFF_CHAIN_AGENT_KEY=$CF_WORKER_ACCESS_OFF_CHAIN_AGENT_KEY" --app "icp-off-chain-agent" --stage
+          flyctl secrets set "RECLAIM_CANISTER_PEM=$RECLAIM_CANISTER_PEM" --app "icp-off-chain-agent" --stage
+          flyctl secrets set "HOTORNOT_CF_ACCOUNT_ID=$HOTORNOT_CF_ACCOUNT_ID" --app "icp-off-chain-agent" --stage
+        env:
+          FLY_API_TOKEN: ${{ secrets.HOT_OR_NOT_OFF_CHAIN_AGENT_FLY_IO_GITHUB_ACTION }}
+          CF_R2_ACCESS_KEY_TEMP: ${{ secrets.HOT_OR_NOT_OFF_CHAIN_AGENT_CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CF_R2_SECRET_ACCESS_KEY_TEMP: ${{ secrets.HOT_OR_NOT_OFF_CHAIN_AGENT_CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          CF_WORKER_ACCESS_OFF_CHAIN_AGENT_KEY: ${{ secrets.CF_WORKER_ACCESS_OFF_CHAIN_AGENT_KEY }}
+          RECLAIM_CANISTER_PEM: |
+            ${{ secrets.HOT_OR_NOT_OFF_CHAIN_AGENT_CANISTER_PRIVILEGED_IDENTITY_SECRET_KEY }}
+          HOTORNOT_CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Deploy a docker container to fly.io
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.HOT_OR_NOT_OFF_CHAIN_AGENT_FLY_IO_GITHUB_ACTION }}
